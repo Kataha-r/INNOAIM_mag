@@ -65,13 +65,18 @@
             <button type="button" class="data-button" id="clientClearOrderButton" disabled>Wyczyść zamówienie</button>
           </div>
         </div>
+        <div class="client-order-recipient">
+          <label>Nazwa firmy / odbiorcy<input id="clientCompanyName" type="text" placeholder="np. Firma ABC" /></label>
+          <label>Osoba kontaktowa<input id="clientContactPerson" type="text" placeholder="Imię i nazwisko" /></label>
+          <label>Telefon<input id="clientPhoneNumber" type="tel" placeholder="Numer telefonu" /></label>
+        </div>
         <div class="client-order-list" id="clientOrderList"></div>
       </section>
     </main>
 
     <div class="toast" id="clientToast" role="status" aria-live="polite"></div>
 
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="vendor/supabase.min.js"></script>
     <script src="vendor/xlsx.bundle.js"></script>
     <script src="client.js"></script>
   </body>

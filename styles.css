@@ -3362,6 +3362,22 @@ form select:focus {
   flex-wrap: wrap;
 }
 
+.client-order-recipient {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 0 28px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.client-order-recipient label {
+  margin: 0;
+}
+
+.client-order-recipient input {
+  height: 40px;
+}
+
 .client-order-list {
   display: grid;
 }
@@ -3451,6 +3467,11 @@ form select:focus {
   .client-order-controls {
     grid-column: 1 / -1;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .client-order-recipient {
+    grid-template-columns: 1fr;
+    padding: 0 18px 18px;
   }
 
   .client-order-controls .primary-button {

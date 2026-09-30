@@ -495,7 +495,8 @@
                   <textarea id="globalClientCodesInput" rows="5" placeholder="np. FIRMA2026, KLIENT-A, SERWIS-01"></textarea>
                 </label>
                 <div class="client-settings-actions">
-                  <button type="button" class="primary-button" id="saveGlobalClientCodesButton">Zapisz kody dla wszystkich produktów</button>
+                  <button type="button" class="primary-button" id="addClientCodesCatalogButton">Dodaj kod do listy</button>
+                  <button type="button" class="data-button" id="saveGlobalClientCodesButton">Przypisz kody do wszystkich produktów</button>
                   <button type="button" class="data-button" id="clearGlobalClientCodesButton">Wyczyść dostęp</button>
                   <button type="button" class="data-button" id="downloadClientCodesSqlButton">Pobierz SQL naprawy kodów</button>
                 </div>
@@ -504,7 +505,7 @@
                   <label>Nowy kod<input id="replaceClientCodeTo" type="text" placeholder="np. NOWY2026" /></label>
                   <button type="button" class="data-button" id="replaceClientCodeButton">Zamień kod</button>
                 </div>
-                <p class="client-settings-note">Klient nie loguje się e-mailem. Wchodzi w klient.html i wpisuje jeden z tych kodów.</p>
+                <p class="client-settings-note">Najbezpieczniej: wpisz kod, kliknij „Dodaj kod do listy”, a potem w tabeli produktów wybierz ten kod tylko przy produktach, które klient ma widzieć.</p>
               </article>
 
               <article class="client-preview-box">
@@ -658,7 +659,7 @@
     </div>
 
     <div class="toast" id="toast" role="status">Zmiany zostały zapisane.</div>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="vendor/supabase.min.js"></script>
     <script src="vendor/xlsx.bundle.js"></script>
     <script src="app.js"></script>
   </body>

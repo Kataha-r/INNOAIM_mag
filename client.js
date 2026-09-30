@@ -16,6 +16,9 @@ const clientOrderList = document.querySelector("#clientOrderList");
 const clientOrderSummary = document.querySelector("#clientOrderSummary");
 const clientExportOrderButton = document.querySelector("#clientExportOrderButton");
 const clientClearOrderButton = document.querySelector("#clientClearOrderButton");
+const clientCompanyName = document.querySelector("#clientCompanyName");
+const clientContactPerson = document.querySelector("#clientContactPerson");
+const clientPhoneNumber = document.querySelector("#clientPhoneNumber");
 
 let clientSupabase = null;
 let clientProducts = [];
@@ -61,6 +64,41 @@ function safeClientFileName(value) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 180);
+}
+
+function downloadClientBlobFile(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.rel = "noopener";
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+    link.remove();
+  }, 0);
+}
+
+function exportClientWorkbookToExcel(workbook, filename) {
+  if (!window.XLSX) throw new Error("Biblioteka Excel nie została załadowana.");
+  if (typeof window.XLSX.write === "function") {
+    const output = window.XLSX.write(workbook, {
+      bookType: "xlsx",
+      type: "array",
+      cellStyles: true,
+    });
+    downloadClientBlobFile(filename, new Blob([output], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }));
+    return;
+  }
+  if (typeof window.XLSX.writeFile === "function") {
+    window.XLSX.writeFile(workbook, filename);
+    return;
+  }
+  throw new Error("Brak funkcji pobierania pliku Excel.");
 }
 
 function getClientProductById(productId) {
@@ -164,6 +202,9 @@ function exportClientOrderToExcel() {
     year: "numeric",
   }).format(new Date());
   const orderTitle = `Zamówienie klienta ${clientAccessCode || "bez kodu"} dnia ${orderDate}`;
+  const companyName = clientCompanyName.value.trim() || "Nie podano";
+  const contactPerson = clientContactPerson.value.trim() || "Nie podano";
+  const phoneNumber = clientPhoneNumber.value.trim() || "Nie podano";
   const rows = clientOrderItems.map((item, index) => {
     const quantity = Number(item.quantity) || 0;
     const price = Number(item.price) || 0;
@@ -181,6 +222,9 @@ function exportClientOrderToExcel() {
   const worksheet = window.XLSX.utils.aoa_to_sheet([
     [orderTitle],
     ["Kod klienta", clientAccessCode],
+    ["Firma / odbiorca", companyName],
+    ["Osoba kontaktowa", contactPerson],
+    ["Telefon", phoneNumber],
     [],
     ["Lp.", "Nazwa produktu", "Rodzaj maszyny", "Producent części", "Ilość", "Cena jednostkowa (PLN)", "Wartość (PLN)"],
     ...rows,
@@ -197,7 +241,7 @@ function exportClientOrderToExcel() {
     { wch: 22 },
     { wch: 18 },
   ];
-  worksheet["!autofilter"] = { ref: `A4:G${rows.length + 4}` };
+  worksheet["!autofilter"] = { ref: `A7:G${rows.length + 7}` };
   if (worksheet.A1) {
     worksheet.A1.s = {
       font: { bold: true, sz: 16, color: { rgb: "FFFFFF" } },
@@ -205,7 +249,7 @@ function exportClientOrderToExcel() {
       alignment: { horizontal: "center", vertical: "center" },
     };
   }
-  ["A4", "B4", "C4", "D4", "E4", "F4", "G4"].forEach((address) => {
+  ["A7", "B7", "C7", "D7", "E7", "F7", "G7"].forEach((address) => {
     if (!worksheet[address]) return;
     worksheet[address].s = {
       font: { bold: true, color: { rgb: "FFFFFF" } },
@@ -213,17 +257,22 @@ function exportClientOrderToExcel() {
     };
   });
   rows.forEach((_row, index) => {
-    const excelRow = index + 5;
+    const excelRow = index + 8;
     if (worksheet[`F${excelRow}`]) worksheet[`F${excelRow}`].z = '#,##0.00 "zł"';
     if (worksheet[`G${excelRow}`]) worksheet[`G${excelRow}`].z = '#,##0.00 "zł"';
   });
-  const totalRow = rows.length + 6;
+  const totalRow = rows.length + 9;
   if (worksheet[`G${totalRow}`]) worksheet[`G${totalRow}`].z = '#,##0.00 "zł"';
 
-  const workbook = window.XLSX.utils.book_new();
-  window.XLSX.utils.book_append_sheet(workbook, worksheet, "Zamówienie klienta");
-  window.XLSX.writeFile(workbook, `${safeClientFileName(orderTitle)}.xlsx`);
-  showClientToast("Pobrano zamówienie do Excela.");
+  try {
+    const workbook = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(workbook, worksheet, "Zamówienie klienta");
+    const filenameCompany = companyName !== "Nie podano" ? ` ${companyName}` : "";
+    exportClientWorkbookToExcel(workbook, `${safeClientFileName(`${orderTitle}${filenameCompany}`)}.xlsx`);
+    showClientToast("Pobrano zamówienie do Excela. Wyślij ten plik do InnoAim.");
+  } catch (error) {
+    showClientToast(`Nie udało się pobrać Excela: ${error.message}`);
+  }
 }
 
 function renderClientProducts() {
@@ -273,6 +322,7 @@ function renderClientProducts() {
         </strong>
         <div class="client-order-controls">
           <div class="client-order-limits">
+            <span>Stan magazynowy: <strong>${maxQuantity} szt.</strong></span>
             <span>Maks. do zamówienia: <strong>${limitText}</strong></span>
           </div>
           <label>Ilość

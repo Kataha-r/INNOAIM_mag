@@ -4,6 +4,7 @@ const ORDER_NUMBER_KEY = "stockly-order-number";
 const ORDER_STATE_KEY = "stockly-order-state-v2";
 const ORDER_RECIPIENT_KEY = "stockly-order-recipient";
 const CLIENT_CODES_KEY = "stockly-client-access-codes";
+const CLOUD_PROTECT_KEY = "stockly-cloud-protect-until";
 const DEFAULT_IMAGE = "product-placeholder.svg";
 const SUPABASE_URL = "https://amvgmfvjidukphbbblms.supabase.co";
 const SUPABASE_KEY = "sb_publishable_GmzJPNZa8Ut8njNuJr7s6A_oYlEk-q_";
@@ -96,6 +97,7 @@ const ordersNavButton = document.querySelector("#ordersNavButton");
 const clientsNavButton = document.querySelector("#clientsNavButton");
 const ordersCreateShortageOrderButton = document.querySelector("#ordersCreateShortageOrderButton");
 const globalClientCodesInput = document.querySelector("#globalClientCodesInput");
+const addClientCodesCatalogButton = document.querySelector("#addClientCodesCatalogButton");
 const saveGlobalClientCodesButton = document.querySelector("#saveGlobalClientCodesButton");
 const clearGlobalClientCodesButton = document.querySelector("#clearGlobalClientCodesButton");
 const downloadClientCodesSqlButton = document.querySelector("#downloadClientCodesSqlButton");
@@ -147,6 +149,10 @@ let supabaseClient = null;
 let currentUser = null;
 let realtimeChannel = null;
 let cloudBusy = false;
+let localImportBusy = false;
+let suppressCloudSyncUntil = loadCloudProtectionUntil();
+let cloudSyncGeneration = 0;
+let localProductsProtectedFromCloud = suppressCloudSyncUntil > Date.now();
 let lastDeletedProduct = loadLastDeletedProduct();
 let currentOrderNumber = loadCurrentOrderNumber();
 let pendingOrderRecipientResolver = null;
@@ -159,6 +165,14 @@ function loadLastDeletedProduct() {
     return saved?.product ? saved : null;
   } catch {
     return null;
+  }
+}
+
+function loadCloudProtectionUntil() {
+  try {
+    return Number(localStorage.getItem(CLOUD_PROTECT_KEY)) || 0;
+  } catch {
+    return 0;
   }
 }
 
@@ -367,6 +381,43 @@ function setSyncStatus(state, text) {
   syncStatus.querySelector("span").textContent = text;
 }
 
+function pauseAutomaticCloudSync(milliseconds = 60000) {
+  suppressCloudSyncUntil = Math.max(suppressCloudSyncUntil, Date.now() + milliseconds);
+}
+
+function canRunAutomaticCloudSync() {
+  return !localImportBusy && !isLocalCloudProtectionActive() && Date.now() >= suppressCloudSyncUntil;
+}
+
+function isLocalCloudProtectionActive() {
+  if (localProductsProtectedFromCloud && Date.now() >= suppressCloudSyncUntil) {
+    allowCloudProductsAgain();
+  }
+  return localProductsProtectedFromCloud;
+}
+
+function protectLocalProductsFromCloud(milliseconds = 60 * 60 * 1000) {
+  const protectUntil = Date.now() + milliseconds;
+  localProductsProtectedFromCloud = true;
+  cloudSyncGeneration += 1;
+  suppressCloudSyncUntil = Math.max(suppressCloudSyncUntil, protectUntil);
+  try {
+    localStorage.setItem(CLOUD_PROTECT_KEY, String(suppressCloudSyncUntil));
+  } catch {
+    // Aplikacja nadal działa, tylko bez zapamiętania ochrony po odświeżeniu.
+  }
+}
+
+function allowCloudProductsAgain() {
+  localProductsProtectedFromCloud = false;
+  cloudSyncGeneration += 1;
+  try {
+    localStorage.removeItem(CLOUD_PROTECT_KEY);
+  } catch {
+    // Brak wpływu na działanie aplikacji.
+  }
+}
+
 function toDatabaseProduct(product) {
   return {
     id: product.id,
@@ -415,8 +466,14 @@ function fromDatabaseProduct(product) {
 }
 
 async function loadCloudProducts({ importLocalIfEmpty = false, quiet = false } = {}) {
+  if (isLocalCloudProtectionActive() && !importLocalIfEmpty) {
+    setSyncStatus("", "Kopia lokalna");
+    return;
+  }
+  if (localImportBusy) return;
   if (!supabaseClient || !currentUser || cloudBusy) return;
   cloudBusy = true;
+  const syncGeneration = cloudSyncGeneration;
   setSyncStatus("", "Synchronizacja…");
 
   try {
@@ -426,6 +483,7 @@ async function loadCloudProducts({ importLocalIfEmpty = false, quiet = false } =
       .order("created_at", { ascending: true })
       .limit(PRODUCT_LIMIT);
     if (error) throw error;
+    if (localImportBusy || syncGeneration !== cloudSyncGeneration || (isLocalCloudProtectionActive() && !importLocalIfEmpty)) return;
 
     if (!data.length && importLocalIfEmpty && products.length) {
       const { error: insertError } = await supabaseClient
@@ -433,6 +491,10 @@ async function loadCloudProducts({ importLocalIfEmpty = false, quiet = false } =
         .insert(products.map(toDatabaseProduct));
       if (insertError) throw insertError;
     } else if (data.length) {
+      if (isLocalCloudProtectionActive() && data.length < products.length) {
+        setSyncStatus("", "Kopia lokalna");
+        return;
+      }
       const selectedId = currentProductId;
       products = data.map(fromDatabaseProduct);
       currentProductId = products.some((product) => product.id === selectedId)
@@ -468,7 +530,9 @@ function subscribeToCloudChanges() {
       event: "*",
       schema: "public",
       table: "products",
-    }, () => loadCloudProducts({ quiet: true }))
+    }, () => {
+      if (canRunAutomaticCloudSync()) loadCloudProducts({ quiet: true });
+    })
     .subscribe();
 }
 
@@ -477,7 +541,7 @@ async function handleSession(session, firstLoad) {
   if (!currentUser) {
     loginButton.textContent = "Zaloguj";
     loginButton.classList.remove("logged-in");
-    setSyncStatus("", "Tryb lokalny");
+    setSyncStatus("", supabaseClient ? "Nie zalogowano" : "Tryb lokalny");
     return;
   }
 
@@ -489,7 +553,7 @@ async function handleSession(session, firstLoad) {
 
 async function initializeSupabase() {
   if (!window.supabase?.createClient) {
-    setSyncStatus("error", "Tryb lokalny");
+    setSyncStatus("error", "Brak Supabase");
     return;
   }
 
@@ -520,8 +584,17 @@ async function removeProductFromCloud(productId) {
   setSyncStatus("online", "Zsynchronizowano");
 }
 
+function chunkArray(items, size) {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
 async function replaceCloudProducts(nextProducts) {
-  if (!currentUser) return;
+  if (!supabaseClient) throw new Error("Brak połączenia z Supabase. Sprawdź, czy wgrano folder vendor i odśwież stronę.");
+  if (!currentUser) return { synced: false, cloudCount: null };
   setSyncStatus("", "Przywracanie…");
   const { error: deleteError } = await supabaseClient
     .from("products")
@@ -529,12 +602,24 @@ async function replaceCloudProducts(nextProducts) {
     .eq("owner_id", currentUser.id);
   if (deleteError) throw deleteError;
   if (nextProducts.length) {
-    const { error: insertError } = await supabaseClient
-      .from("products")
-      .insert(nextProducts.map(toDatabaseProduct));
-    if (insertError) throw insertError;
+    const chunks = chunkArray(nextProducts, 25);
+    let uploaded = 0;
+    for (const chunk of chunks) {
+      setSyncStatus("", `Wysyłanie do chmury ${uploaded}/${nextProducts.length}…`);
+      const { error: insertError } = await supabaseClient
+        .from("products")
+        .insert(chunk.map(toDatabaseProduct));
+      if (insertError) throw insertError;
+      uploaded += chunk.length;
+    }
   }
+  const { count, error: countError } = await supabaseClient
+    .from("products")
+    .select("id", { count: "exact", head: true })
+    .eq("owner_id", currentUser.id);
+  if (countError) throw countError;
   setSyncStatus("online", "Zsynchronizowano");
+  return { synced: true, cloudCount: count };
 }
 
 function getCurrentProduct() {
@@ -899,10 +984,15 @@ function exportShipmentsToExcel() {
     }
   });
 
-  const workbook = window.XLSX.utils.book_new();
-  window.XLSX.utils.book_append_sheet(workbook, worksheet, "Wysyłki");
-  window.XLSX.writeFile(workbook, `wysylki-${dateFromValue}-do-${dateToValue}.xlsx`);
-  showToast(`Wyeksportowano ${shipments.length} wierszy wysyłek.`);
+  try {
+    const workbook = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(workbook, worksheet, "Wysyłki");
+    exportWorkbookToExcel(workbook, `wysylki-${dateFromValue}-do-${dateToValue}.xlsx`);
+    showToast(`Wyeksportowano ${shipments.length} wierszy wysyłek.`);
+  } catch (error) {
+    const reason = error?.message ? ` Powód: ${error.message}` : "";
+    showToast(`Nie udało się pobrać Excela z wysyłkami.${reason}`);
+  }
 }
 
 function renderStatistics() {
@@ -1352,12 +1442,43 @@ function sqlString(value) {
 
 function downloadTextFile(filename, content, type = "text/plain") {
   const blob = new Blob([content], { type });
+  downloadBlobFile(filename, blob);
+}
+
+function downloadBlobFile(filename, blob) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
+  link.rel = "noopener";
+  link.style.display = "none";
+  document.body.appendChild(link);
   link.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+    link.remove();
+  }, 0);
+}
+
+function exportWorkbookToExcel(workbook, filename) {
+  if (!window.XLSX) throw new Error("Biblioteka Excel nie została załadowana.");
+  if (typeof window.XLSX.write === "function") {
+    const output = window.XLSX.write(workbook, {
+      bookType: "xlsx",
+      type: "array",
+      cellStyles: true,
+    });
+    const blob = new Blob([output], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    downloadBlobFile(filename, blob);
+    return;
+  }
+  if (typeof window.XLSX.writeFile === "function") {
+    window.XLSX.writeFile(workbook, filename);
+    return;
+  }
+  throw new Error("Brak funkcji pobierania pliku Excel.");
 }
 
 function getAllClientCodes() {
@@ -1521,24 +1642,49 @@ async function saveGlobalClientCodesForAllProducts() {
 
   try {
     setSyncStatus("", "Zapisywanie klientów…");
-    await Promise.all(products.map((product) => saveProductToCloud(product, false)));
+    const { error: updateError } = await supabaseClient
+      .from("products")
+      .update({ visible_to_codes: codes })
+      .eq("owner_id", currentUser.id);
+    if (updateError) throw updateError;
+    const { count, error: countError } = await supabaseClient
+      .from("products")
+      .select("id", { count: "exact", head: true })
+      .eq("owner_id", currentUser.id);
+    if (countError) throw countError;
     setSyncStatus("online", "Zsynchronizowano");
     saveProducts();
     renderProduct();
     renderProductsList();
     renderClientsView();
-    showToast(codes.length
-      ? `Zapisano dostęp: ${codes.length} kodów pokazuje wszystkie produkty.`
-      : "Wyczyszczono dostęp kodów do produktów."
-    );
+    if (codes.length) {
+      showToast(`Zapisano dostęp w chmurze: kod pokazuje ${count ?? products.length} produktów.`);
+    } else {
+      showToast(`Wyczyszczono dostęp kodów w chmurze dla ${count ?? products.length} produktów.`);
+    }
   } catch (error) {
     saveClientCodeCatalog(previousCodes);
     products = previousProducts;
+    saveProducts();
+    renderProduct();
+    renderProductsList();
     renderClientsView();
     setSyncStatus("error", "Błąd zapisu");
     const reason = error?.message ? ` Powód: ${error.message}` : "";
     showToast(`Nie udało się zapisać dostępu klientów.${reason}`);
   }
+}
+
+function addClientCodesToCatalogOnly() {
+  const codes = parseClientCodes(globalClientCodesInput.value);
+  if (!codes.length) {
+    showToast("Wpisz przynajmniej jeden kod klienta.");
+    return;
+  }
+  saveClientCodeCatalog([...new Set([...loadSavedClientCodes(), ...codes])]);
+  renderProductsList();
+  renderClientsView();
+  showToast("Dodano kod do listy. Teraz wybierz go przy konkretnych produktach w kolumnie „Kody klientów”.");
 }
 
 async function updateProductClientCodes(productId, nextCodes) {
@@ -1864,7 +2010,7 @@ function exportProductsToExcel() {
   const workbook = window.XLSX.utils.book_new();
   window.XLSX.utils.book_append_sheet(workbook, worksheet, "Produkty");
   const date = new Date().toISOString().slice(0, 10);
-  window.XLSX.writeFile(workbook, `produkty-magazyn-${date}.xlsx`);
+  exportWorkbookToExcel(workbook, `produkty-magazyn-${date}.xlsx`);
   showToast(`Wyeksportowano ${visibleProducts.length} produktów.`);
 }
 
@@ -1983,7 +2129,7 @@ async function exportOrderToExcel() {
   });
   const workbook = window.XLSX.utils.book_new();
   window.XLSX.utils.book_append_sheet(workbook, worksheet, "Zamówienie");
-  window.XLSX.writeFile(workbook, `${safeFileName(orderTitle)}.xlsx`);
+  exportWorkbookToExcel(workbook, `${safeFileName(orderTitle)}.xlsx`);
   let statisticsSaved = true;
   try {
     await recordOrderRecipientStatistics(orderedProducts, recipientDetails, orderTitle);
@@ -2076,11 +2222,27 @@ async function importProductsFromExcel(file) {
   currentProductId = products.some((product) => product.id === currentProductId)
     ? currentProductId
     : products[0].id;
-  await replaceCloudProducts(products);
+  protectLocalProductsFromCloud();
   saveProducts();
   renderProduct();
   renderProductsList();
-  showToast(`Import zakończony: zmieniono ${updated}, dodano ${added}.`);
+  try {
+    const cloudResult = await replaceCloudProducts(products);
+    if (cloudResult?.synced && cloudResult.cloudCount >= products.length) {
+      allowCloudProductsAgain();
+    } else {
+      protectLocalProductsFromCloud();
+    }
+    showToast(cloudResult?.synced && cloudResult.cloudCount >= products.length
+      ? `Import zakończony i zapisany w chmurze: ${cloudResult.cloudCount} produktów.`
+      : `Import zakończony lokalnie: ${products.length} produktów. Chmura nadal ma ${cloudResult?.cloudCount ?? "brak"} produktów.`
+    );
+  } catch (error) {
+    protectLocalProductsFromCloud();
+    const reason = error?.message ? ` Powód: ${error.message}` : "";
+    setSyncStatus("error", "Nie zapisano chmury");
+    showToast(`Import zapisany lokalnie, ale nie w chmurze.${reason}`);
+  }
 }
 
 async function exportBackup() {
@@ -2106,7 +2268,13 @@ async function exportBackup() {
 }
 
 async function restoreBackup(file) {
-  const backup = JSON.parse(await file.text());
+  showToast("Wczytuję kopię zapasową…");
+  let backup;
+  try {
+    backup = JSON.parse(await file.text());
+  } catch {
+    throw new Error("Nie udało się odczytać kopii. Wybierz plik .json pobrany z tej aplikacji, nie plik .zip ani Excel.");
+  }
   if (backup?.format !== "stockly-backup" || !Array.isArray(backup.products) || !backup.products.length) {
     throw new Error("To nie jest prawidłowa kopia zapasowa aplikacji.");
   }
@@ -2133,14 +2301,36 @@ async function restoreBackup(file) {
       : [product.image || DEFAULT_IMAGE],
     image: (Array.isArray(product.images) && product.images[0]) || product.image || DEFAULT_IMAGE,
   }));
-  await saveAllProductImages(restored);
-  await replaceCloudProducts(restored);
   products = restored;
   currentProductId = products[0].id;
+  protectLocalProductsFromCloud();
   saveProducts();
   renderProduct();
   renderProductsList();
-  showToast("Kopia zapasowa została przywrócona.");
+  let imageWarning = "";
+  try {
+    await saveAllProductImages(restored);
+  } catch (error) {
+    imageWarning = " Zdjęcia mogły nie zmieścić się w pamięci tej przeglądarki.";
+  }
+
+  try {
+    const cloudResult = await replaceCloudProducts(restored);
+    if (cloudResult?.synced && cloudResult.cloudCount >= restored.length) {
+      allowCloudProductsAgain();
+    } else {
+      protectLocalProductsFromCloud();
+    }
+    showToast(cloudResult?.synced && cloudResult.cloudCount >= restored.length
+      ? `Kopia zapasowa przywrócona w chmurze: ${cloudResult.cloudCount} produktów.${imageWarning}`
+      : `Kopia zapasowa przywrócona lokalnie: ${restored.length} produktów.${imageWarning} Chmura nadal ma ${cloudResult?.cloudCount ?? "brak"} produktów.`
+    );
+  } catch (error) {
+    protectLocalProductsFromCloud();
+    const reason = error?.message ? ` Powód: ${error.message}` : "";
+    setSyncStatus("error", "Nie zapisano chmury");
+    showToast(`Kopia przywrócona lokalnie, ale nie w chmurze.${imageWarning}${reason}`);
+  }
 }
 
 async function deleteProduct(productId) {
@@ -2477,6 +2667,7 @@ statisticsSearch.addEventListener("input", renderStatistics);
 topProductsCount.addEventListener("change", renderStatistics);
 exportShipmentsButton.addEventListener("click", exportShipmentsToExcel);
 clientPreviewCodeSelect.addEventListener("change", renderClientsView);
+addClientCodesCatalogButton.addEventListener("click", addClientCodesToCatalogOnly);
 saveGlobalClientCodesButton.addEventListener("click", saveGlobalClientCodesForAllProducts);
 downloadClientCodesSqlButton.addEventListener("click", downloadClientCodesRepairSql);
 checkClientCodeCloudButton.addEventListener("click", checkSelectedClientCodeInCloud);
@@ -2556,25 +2747,37 @@ exportExcelButton.addEventListener("click", exportProductsToExcel);
 exportOrderButton.addEventListener("click", exportOrderToExcel);
 clearOrderButton.addEventListener("click", clearOrder);
 backupButton.addEventListener("click", exportBackup);
+importExcelInput.addEventListener("click", () => pauseAutomaticCloudSync(120000));
 importExcelInput.addEventListener("change", async () => {
   const file = importExcelInput.files[0];
   if (!file) return;
+  localImportBusy = true;
+  pauseAutomaticCloudSync(300000);
+  setSyncStatus("", "Wczytywanie importu…");
   try {
     await importProductsFromExcel(file);
   } catch (error) {
     showToast(error.message);
   } finally {
+    localImportBusy = false;
+    pauseAutomaticCloudSync(300000);
     importExcelInput.value = "";
   }
 });
+restoreBackupInput.addEventListener("click", () => pauseAutomaticCloudSync(120000));
 restoreBackupInput.addEventListener("change", async () => {
   const file = restoreBackupInput.files[0];
   if (!file) return;
+  localImportBusy = true;
+  pauseAutomaticCloudSync(300000);
+  setSyncStatus("", "Wczytywanie kopii…");
   try {
     await restoreBackup(file);
   } catch (error) {
     showToast(error.message);
   } finally {
+    localImportBusy = false;
+    pauseAutomaticCloudSync(300000);
     restoreBackupInput.value = "";
   }
 });
@@ -2609,7 +2812,11 @@ locationSuggestion.addEventListener("click", () => {
 loginButton.addEventListener("click", async () => {
   if (currentUser) {
     await supabaseClient.auth.signOut();
-    showToast("Wylogowano. Aplikacja działa teraz lokalnie.");
+    showToast("Wylogowano. Zaloguj ponownie, żeby zapisywać w chmurze.");
+    return;
+  }
+  if (!supabaseClient) {
+    showToast("Nie załadowano połączenia Supabase. Odśwież stronę albo sprawdź plik vendor/supabase.min.js na GitHub.");
     return;
   }
   authModal.hidden = false;
@@ -2650,6 +2857,10 @@ orderRecipientForm.addEventListener("submit", (event) => {
 
 authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!supabaseClient) {
+    showToast("Brak połączenia Supabase. Odśwież stronę i sprawdź, czy wgrano folder vendor.");
+    return;
+  }
   const email = authForm.elements.email.value.trim();
   const password = authForm.elements.password.value;
   const button = authForm.querySelector("button[type='submit']");
@@ -2936,7 +3147,7 @@ registerServiceWorker();
 hydrateImagesFromLocalDatabase();
 initializeSupabase();
 setInterval(() => {
-  if (currentUser && document.visibilityState === "visible") {
+  if (currentUser && document.visibilityState === "visible" && canRunAutomaticCloudSync()) {
     loadCloudProducts({ quiet: true });
   }
 }, 10000);
