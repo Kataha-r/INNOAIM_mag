@@ -899,10 +899,15 @@ function exportShipmentsToExcel() {
     }
   });
 
-  const workbook = window.XLSX.utils.book_new();
-  window.XLSX.utils.book_append_sheet(workbook, worksheet, "Wysyłki");
-  window.XLSX.writeFile(workbook, `wysylki-${dateFromValue}-do-${dateToValue}.xlsx`);
-  showToast(`Wyeksportowano ${shipments.length} wierszy wysyłek.`);
+  try {
+    const workbook = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(workbook, worksheet, "Wysyłki");
+    exportWorkbookToExcel(workbook, `wysylki-${dateFromValue}-do-${dateToValue}.xlsx`);
+    showToast(`Wyeksportowano ${shipments.length} wierszy wysyłek.`);
+  } catch (error) {
+    const reason = error?.message ? ` Powód: ${error.message}` : "";
+    showToast(`Nie udało się pobrać Excela z wysyłkami.${reason}`);
+  }
 }
 
 function renderStatistics() {
@@ -1352,12 +1357,43 @@ function sqlString(value) {
 
 function downloadTextFile(filename, content, type = "text/plain") {
   const blob = new Blob([content], { type });
+  downloadBlobFile(filename, blob);
+}
+
+function downloadBlobFile(filename, blob) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
+  link.rel = "noopener";
+  link.style.display = "none";
+  document.body.appendChild(link);
   link.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+    link.remove();
+  }, 0);
+}
+
+function exportWorkbookToExcel(workbook, filename) {
+  if (!window.XLSX) throw new Error("Biblioteka Excel nie została załadowana.");
+  if (typeof window.XLSX.write === "function") {
+    const output = window.XLSX.write(workbook, {
+      bookType: "xlsx",
+      type: "array",
+      cellStyles: true,
+    });
+    const blob = new Blob([output], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    downloadBlobFile(filename, blob);
+    return;
+  }
+  if (typeof window.XLSX.writeFile === "function") {
+    window.XLSX.writeFile(workbook, filename);
+    return;
+  }
+  throw new Error("Brak funkcji pobierania pliku Excel.");
 }
 
 function getAllClientCodes() {
@@ -1864,7 +1900,7 @@ function exportProductsToExcel() {
   const workbook = window.XLSX.utils.book_new();
   window.XLSX.utils.book_append_sheet(workbook, worksheet, "Produkty");
   const date = new Date().toISOString().slice(0, 10);
-  window.XLSX.writeFile(workbook, `produkty-magazyn-${date}.xlsx`);
+  exportWorkbookToExcel(workbook, `produkty-magazyn-${date}.xlsx`);
   showToast(`Wyeksportowano ${visibleProducts.length} produktów.`);
 }
 
@@ -1983,7 +2019,7 @@ async function exportOrderToExcel() {
   });
   const workbook = window.XLSX.utils.book_new();
   window.XLSX.utils.book_append_sheet(workbook, worksheet, "Zamówienie");
-  window.XLSX.writeFile(workbook, `${safeFileName(orderTitle)}.xlsx`);
+  exportWorkbookToExcel(workbook, `${safeFileName(orderTitle)}.xlsx`);
   let statisticsSaved = true;
   try {
     await recordOrderRecipientStatistics(orderedProducts, recipientDetails, orderTitle);
