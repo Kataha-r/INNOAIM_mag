@@ -147,6 +147,8 @@ let supabaseClient = null;
 let currentUser = null;
 let realtimeChannel = null;
 let cloudBusy = false;
+let localImportBusy = false;
+let suppressCloudSyncUntil = 0;
 let lastDeletedProduct = loadLastDeletedProduct();
 let currentOrderNumber = loadCurrentOrderNumber();
 let pendingOrderRecipientResolver = null;
@@ -367,6 +369,14 @@ function setSyncStatus(state, text) {
   syncStatus.querySelector("span").textContent = text;
 }
 
+function pauseAutomaticCloudSync(milliseconds = 60000) {
+  suppressCloudSyncUntil = Math.max(suppressCloudSyncUntil, Date.now() + milliseconds);
+}
+
+function canRunAutomaticCloudSync() {
+  return !localImportBusy && Date.now() >= suppressCloudSyncUntil;
+}
+
 function toDatabaseProduct(product) {
   return {
     id: product.id,
@@ -415,6 +425,7 @@ function fromDatabaseProduct(product) {
 }
 
 async function loadCloudProducts({ importLocalIfEmpty = false, quiet = false } = {}) {
+  if (localImportBusy) return;
   if (!supabaseClient || !currentUser || cloudBusy) return;
   cloudBusy = true;
   setSyncStatus("", "Synchronizacja…");
@@ -426,6 +437,7 @@ async function loadCloudProducts({ importLocalIfEmpty = false, quiet = false } =
       .order("created_at", { ascending: true })
       .limit(PRODUCT_LIMIT);
     if (error) throw error;
+    if (localImportBusy) return;
 
     if (!data.length && importLocalIfEmpty && products.length) {
       const { error: insertError } = await supabaseClient
@@ -468,7 +480,9 @@ function subscribeToCloudChanges() {
       event: "*",
       schema: "public",
       table: "products",
-    }, () => loadCloudProducts({ quiet: true }))
+    }, () => {
+      if (canRunAutomaticCloudSync()) loadCloudProducts({ quiet: true });
+    })
     .subscribe();
 }
 
@@ -2643,25 +2657,37 @@ exportExcelButton.addEventListener("click", exportProductsToExcel);
 exportOrderButton.addEventListener("click", exportOrderToExcel);
 clearOrderButton.addEventListener("click", clearOrder);
 backupButton.addEventListener("click", exportBackup);
+importExcelInput.addEventListener("click", () => pauseAutomaticCloudSync(120000));
 importExcelInput.addEventListener("change", async () => {
   const file = importExcelInput.files[0];
   if (!file) return;
+  localImportBusy = true;
+  pauseAutomaticCloudSync(300000);
+  setSyncStatus("", "Wczytywanie importu…");
   try {
     await importProductsFromExcel(file);
   } catch (error) {
     showToast(error.message);
   } finally {
+    localImportBusy = false;
+    pauseAutomaticCloudSync(300000);
     importExcelInput.value = "";
   }
 });
+restoreBackupInput.addEventListener("click", () => pauseAutomaticCloudSync(120000));
 restoreBackupInput.addEventListener("change", async () => {
   const file = restoreBackupInput.files[0];
   if (!file) return;
+  localImportBusy = true;
+  pauseAutomaticCloudSync(300000);
+  setSyncStatus("", "Wczytywanie kopii…");
   try {
     await restoreBackup(file);
   } catch (error) {
     showToast(error.message);
   } finally {
+    localImportBusy = false;
+    pauseAutomaticCloudSync(300000);
     restoreBackupInput.value = "";
   }
 });
@@ -3031,7 +3057,7 @@ registerServiceWorker();
 hydrateImagesFromLocalDatabase();
 initializeSupabase();
 setInterval(() => {
-  if (currentUser && document.visibilityState === "visible") {
+  if (currentUser && document.visibilityState === "visible" && canRunAutomaticCloudSync()) {
     loadCloudProducts({ quiet: true });
   }
 }, 10000);

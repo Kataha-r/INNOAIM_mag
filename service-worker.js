@@ -1,4 +1,4 @@
-const CACHE_NAME = "innoaim-magazyn-v23";
+const CACHE_NAME = "innoaim-magazyn-v24";
 const APP_FILES = [
   "./",
   "./index.html",
