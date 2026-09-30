@@ -477,7 +477,7 @@ async function handleSession(session, firstLoad) {
   if (!currentUser) {
     loginButton.textContent = "Zaloguj";
     loginButton.classList.remove("logged-in");
-    setSyncStatus("", "Tryb lokalny");
+    setSyncStatus("", supabaseClient ? "Nie zalogowano" : "Tryb lokalny");
     return;
   }
 
@@ -489,7 +489,7 @@ async function handleSession(session, firstLoad) {
 
 async function initializeSupabase() {
   if (!window.supabase?.createClient) {
-    setSyncStatus("error", "Tryb lokalny");
+    setSyncStatus("error", "Brak Supabase");
     return;
   }
 
@@ -2645,7 +2645,11 @@ locationSuggestion.addEventListener("click", () => {
 loginButton.addEventListener("click", async () => {
   if (currentUser) {
     await supabaseClient.auth.signOut();
-    showToast("Wylogowano. Aplikacja działa teraz lokalnie.");
+    showToast("Wylogowano. Zaloguj ponownie, żeby zapisywać w chmurze.");
+    return;
+  }
+  if (!supabaseClient) {
+    showToast("Nie załadowano połączenia Supabase. Odśwież stronę albo sprawdź plik vendor/supabase.min.js na GitHub.");
     return;
   }
   authModal.hidden = false;
@@ -2686,6 +2690,10 @@ orderRecipientForm.addEventListener("submit", (event) => {
 
 authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!supabaseClient) {
+    showToast("Brak połączenia Supabase. Odśwież stronę i sprawdź, czy wgrano folder vendor.");
+    return;
+  }
   const email = authForm.elements.email.value.trim();
   const password = authForm.elements.password.value;
   const button = authForm.querySelector("button[type='submit']");
