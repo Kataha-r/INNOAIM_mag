@@ -381,6 +381,15 @@ function setSyncStatus(state, text) {
   syncStatus.querySelector("span").textContent = text;
 }
 
+function getErrorMessage(error) {
+  return [
+    error?.message,
+    error?.details,
+    error?.hint,
+    error?.code ? `Kod: ${error.code}` : "",
+  ].filter(Boolean).join(" ");
+}
+
 function pauseAutomaticCloudSync(milliseconds = 60000) {
   suppressCloudSyncUntil = Math.max(suppressCloudSyncUntil, Date.now() + milliseconds);
 }
@@ -500,7 +509,11 @@ async function loadCloudProducts({ importLocalIfEmpty = false, quiet = false } =
       currentProductId = products.some((product) => product.id === selectedId)
         ? selectedId
         : products[0].id;
-      await saveAllProductImages(products);
+      try {
+        await saveAllProductImages(products);
+      } catch {
+        showToast("Produkty pobrano z chmury, ale część zdjęć nie zmieściła się w pamięci tej przeglądarki.");
+      }
       saveProducts();
       renderProduct();
       renderProductsList();
@@ -512,9 +525,11 @@ async function loadCloudProducts({ importLocalIfEmpty = false, quiet = false } =
   } catch (error) {
     setSyncStatus("error", "Błąd synchronizacji");
     if (!quiet) {
-      showToast(error.message.includes("products")
-        ? "Uruchom plik supabase-setup.sql w Supabase."
-        : "Nie udało się połączyć z Supabase.");
+      const reason = getErrorMessage(error);
+      showToast(reason
+        ? `Błąd synchronizacji: ${reason}`
+        : "Nie udało się połączyć z Supabase."
+      );
     }
   } finally {
     cloudBusy = false;
@@ -1670,7 +1685,8 @@ async function saveGlobalClientCodesForAllProducts() {
     renderProductsList();
     renderClientsView();
     setSyncStatus("error", "Błąd zapisu");
-    const reason = error?.message ? ` Powód: ${error.message}` : "";
+    const errorText = getErrorMessage(error);
+    const reason = errorText ? ` Powód: ${errorText}` : "";
     showToast(`Nie udało się zapisać dostępu klientów.${reason}`);
   }
 }
