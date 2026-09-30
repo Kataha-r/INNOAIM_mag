@@ -1,4 +1,4 @@
-const CACHE_NAME = "innoaim-magazyn-v24";
+const CACHE_NAME = "innoaim-magazyn-v19";
 const APP_FILES = [
   "./",
   "./index.html",
@@ -13,8 +13,7 @@ const APP_FILES = [
   "./innoaim-phone-icon-square.jpg",
   "./innoaim-phone-icon-512.jpg",
   "./product-placeholder.svg",
-  "./vendor/xlsx.bundle.js",
-  "./vendor/supabase.min.js"
+  "./vendor/xlsx.bundle.js"
 ];
 
 self.addEventListener("install", (event) => {

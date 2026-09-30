@@ -147,8 +147,6 @@ let supabaseClient = null;
 let currentUser = null;
 let realtimeChannel = null;
 let cloudBusy = false;
-let localImportBusy = false;
-let suppressCloudSyncUntil = 0;
 let lastDeletedProduct = loadLastDeletedProduct();
 let currentOrderNumber = loadCurrentOrderNumber();
 let pendingOrderRecipientResolver = null;
@@ -369,14 +367,6 @@ function setSyncStatus(state, text) {
   syncStatus.querySelector("span").textContent = text;
 }
 
-function pauseAutomaticCloudSync(milliseconds = 60000) {
-  suppressCloudSyncUntil = Math.max(suppressCloudSyncUntil, Date.now() + milliseconds);
-}
-
-function canRunAutomaticCloudSync() {
-  return !localImportBusy && Date.now() >= suppressCloudSyncUntil;
-}
-
 function toDatabaseProduct(product) {
   return {
     id: product.id,
@@ -425,7 +415,6 @@ function fromDatabaseProduct(product) {
 }
 
 async function loadCloudProducts({ importLocalIfEmpty = false, quiet = false } = {}) {
-  if (localImportBusy) return;
   if (!supabaseClient || !currentUser || cloudBusy) return;
   cloudBusy = true;
   setSyncStatus("", "Synchronizacja…");
@@ -437,7 +426,6 @@ async function loadCloudProducts({ importLocalIfEmpty = false, quiet = false } =
       .order("created_at", { ascending: true })
       .limit(PRODUCT_LIMIT);
     if (error) throw error;
-    if (localImportBusy) return;
 
     if (!data.length && importLocalIfEmpty && products.length) {
       const { error: insertError } = await supabaseClient
@@ -480,9 +468,7 @@ function subscribeToCloudChanges() {
       event: "*",
       schema: "public",
       table: "products",
-    }, () => {
-      if (canRunAutomaticCloudSync()) loadCloudProducts({ quiet: true });
-    })
+    }, () => loadCloudProducts({ quiet: true }))
     .subscribe();
 }
 
@@ -491,7 +477,7 @@ async function handleSession(session, firstLoad) {
   if (!currentUser) {
     loginButton.textContent = "Zaloguj";
     loginButton.classList.remove("logged-in");
-    setSyncStatus("", supabaseClient ? "Nie zalogowano" : "Tryb lokalny");
+    setSyncStatus("", "Tryb lokalny");
     return;
   }
 
@@ -503,7 +489,7 @@ async function handleSession(session, firstLoad) {
 
 async function initializeSupabase() {
   if (!window.supabase?.createClient) {
-    setSyncStatus("error", "Brak Supabase");
+    setSyncStatus("error", "Tryb lokalny");
     return;
   }
 
@@ -534,17 +520,8 @@ async function removeProductFromCloud(productId) {
   setSyncStatus("online", "Zsynchronizowano");
 }
 
-function chunkArray(items, size) {
-  const chunks = [];
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size));
-  }
-  return chunks;
-}
-
 async function replaceCloudProducts(nextProducts) {
-  if (!supabaseClient) throw new Error("Brak połączenia z Supabase. Sprawdź, czy wgrano folder vendor i odśwież stronę.");
-  if (!currentUser) return { synced: false, cloudCount: null };
+  if (!currentUser) return;
   setSyncStatus("", "Przywracanie…");
   const { error: deleteError } = await supabaseClient
     .from("products")
@@ -552,24 +529,12 @@ async function replaceCloudProducts(nextProducts) {
     .eq("owner_id", currentUser.id);
   if (deleteError) throw deleteError;
   if (nextProducts.length) {
-    const chunks = chunkArray(nextProducts, 25);
-    let uploaded = 0;
-    for (const chunk of chunks) {
-      setSyncStatus("", `Wysyłanie do chmury ${uploaded}/${nextProducts.length}…`);
-      const { error: insertError } = await supabaseClient
-        .from("products")
-        .insert(chunk.map(toDatabaseProduct));
-      if (insertError) throw insertError;
-      uploaded += chunk.length;
-    }
+    const { error: insertError } = await supabaseClient
+      .from("products")
+      .insert(nextProducts.map(toDatabaseProduct));
+    if (insertError) throw insertError;
   }
-  const { count, error: countError } = await supabaseClient
-    .from("products")
-    .select("id", { count: "exact", head: true })
-    .eq("owner_id", currentUser.id);
-  if (countError) throw countError;
   setSyncStatus("online", "Zsynchronizowano");
-  return { synced: true, cloudCount: count };
 }
 
 function getCurrentProduct() {
@@ -934,15 +899,10 @@ function exportShipmentsToExcel() {
     }
   });
 
-  try {
-    const workbook = window.XLSX.utils.book_new();
-    window.XLSX.utils.book_append_sheet(workbook, worksheet, "Wysyłki");
-    exportWorkbookToExcel(workbook, `wysylki-${dateFromValue}-do-${dateToValue}.xlsx`);
-    showToast(`Wyeksportowano ${shipments.length} wierszy wysyłek.`);
-  } catch (error) {
-    const reason = error?.message ? ` Powód: ${error.message}` : "";
-    showToast(`Nie udało się pobrać Excela z wysyłkami.${reason}`);
-  }
+  const workbook = window.XLSX.utils.book_new();
+  window.XLSX.utils.book_append_sheet(workbook, worksheet, "Wysyłki");
+  window.XLSX.writeFile(workbook, `wysylki-${dateFromValue}-do-${dateToValue}.xlsx`);
+  showToast(`Wyeksportowano ${shipments.length} wierszy wysyłek.`);
 }
 
 function renderStatistics() {
@@ -1392,43 +1352,12 @@ function sqlString(value) {
 
 function downloadTextFile(filename, content, type = "text/plain") {
   const blob = new Blob([content], { type });
-  downloadBlobFile(filename, blob);
-}
-
-function downloadBlobFile(filename, blob) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
-  link.rel = "noopener";
-  link.style.display = "none";
-  document.body.appendChild(link);
   link.click();
-  setTimeout(() => {
-    URL.revokeObjectURL(url);
-    link.remove();
-  }, 0);
-}
-
-function exportWorkbookToExcel(workbook, filename) {
-  if (!window.XLSX) throw new Error("Biblioteka Excel nie została załadowana.");
-  if (typeof window.XLSX.write === "function") {
-    const output = window.XLSX.write(workbook, {
-      bookType: "xlsx",
-      type: "array",
-      cellStyles: true,
-    });
-    const blob = new Blob([output], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    });
-    downloadBlobFile(filename, blob);
-    return;
-  }
-  if (typeof window.XLSX.writeFile === "function") {
-    window.XLSX.writeFile(workbook, filename);
-    return;
-  }
-  throw new Error("Brak funkcji pobierania pliku Excel.");
+  URL.revokeObjectURL(url);
 }
 
 function getAllClientCodes() {
@@ -1935,7 +1864,7 @@ function exportProductsToExcel() {
   const workbook = window.XLSX.utils.book_new();
   window.XLSX.utils.book_append_sheet(workbook, worksheet, "Produkty");
   const date = new Date().toISOString().slice(0, 10);
-  exportWorkbookToExcel(workbook, `produkty-magazyn-${date}.xlsx`);
+  window.XLSX.writeFile(workbook, `produkty-magazyn-${date}.xlsx`);
   showToast(`Wyeksportowano ${visibleProducts.length} produktów.`);
 }
 
@@ -2054,7 +1983,7 @@ async function exportOrderToExcel() {
   });
   const workbook = window.XLSX.utils.book_new();
   window.XLSX.utils.book_append_sheet(workbook, worksheet, "Zamówienie");
-  exportWorkbookToExcel(workbook, `${safeFileName(orderTitle)}.xlsx`);
+  window.XLSX.writeFile(workbook, `${safeFileName(orderTitle)}.xlsx`);
   let statisticsSaved = true;
   try {
     await recordOrderRecipientStatistics(orderedProducts, recipientDetails, orderTitle);
@@ -2147,20 +2076,11 @@ async function importProductsFromExcel(file) {
   currentProductId = products.some((product) => product.id === currentProductId)
     ? currentProductId
     : products[0].id;
+  await replaceCloudProducts(products);
   saveProducts();
   renderProduct();
   renderProductsList();
-  try {
-    const cloudResult = await replaceCloudProducts(products);
-    showToast(cloudResult?.synced
-      ? `Import zakończony i zapisany w chmurze: ${cloudResult.cloudCount} produktów.`
-      : `Import zakończony lokalnie: zmieniono ${updated}, dodano ${added}. Zaloguj się, żeby zapisać chmurę.`
-    );
-  } catch (error) {
-    const reason = error?.message ? ` Powód: ${error.message}` : "";
-    setSyncStatus("error", "Nie zapisano chmury");
-    showToast(`Import zapisany lokalnie, ale nie w chmurze.${reason}`);
-  }
+  showToast(`Import zakończony: zmieniono ${updated}, dodano ${added}.`);
 }
 
 async function exportBackup() {
@@ -2186,13 +2106,7 @@ async function exportBackup() {
 }
 
 async function restoreBackup(file) {
-  showToast("Wczytuję kopię zapasową…");
-  let backup;
-  try {
-    backup = JSON.parse(await file.text());
-  } catch {
-    throw new Error("Nie udało się odczytać kopii. Wybierz plik .json pobrany z tej aplikacji, nie plik .zip ani Excel.");
-  }
+  const backup = JSON.parse(await file.text());
   if (backup?.format !== "stockly-backup" || !Array.isArray(backup.products) || !backup.products.length) {
     throw new Error("To nie jest prawidłowa kopia zapasowa aplikacji.");
   }
@@ -2219,29 +2133,14 @@ async function restoreBackup(file) {
       : [product.image || DEFAULT_IMAGE],
     image: (Array.isArray(product.images) && product.images[0]) || product.image || DEFAULT_IMAGE,
   }));
+  await saveAllProductImages(restored);
+  await replaceCloudProducts(restored);
   products = restored;
   currentProductId = products[0].id;
   saveProducts();
   renderProduct();
   renderProductsList();
-  let imageWarning = "";
-  try {
-    await saveAllProductImages(restored);
-  } catch (error) {
-    imageWarning = " Zdjęcia mogły nie zmieścić się w pamięci tej przeglądarki.";
-  }
-
-  try {
-    const cloudResult = await replaceCloudProducts(restored);
-    showToast(cloudResult?.synced
-      ? `Kopia zapasowa przywrócona w chmurze: ${cloudResult.cloudCount} produktów.${imageWarning}`
-      : `Kopia zapasowa przywrócona lokalnie: ${restored.length} produktów.${imageWarning} Zaloguj się, żeby zapisać chmurę.`
-    );
-  } catch (error) {
-    const reason = error?.message ? ` Powód: ${error.message}` : "";
-    setSyncStatus("error", "Nie zapisano chmury");
-    showToast(`Kopia przywrócona lokalnie, ale nie w chmurze.${imageWarning}${reason}`);
-  }
+  showToast("Kopia zapasowa została przywrócona.");
 }
 
 async function deleteProduct(productId) {
@@ -2657,37 +2556,25 @@ exportExcelButton.addEventListener("click", exportProductsToExcel);
 exportOrderButton.addEventListener("click", exportOrderToExcel);
 clearOrderButton.addEventListener("click", clearOrder);
 backupButton.addEventListener("click", exportBackup);
-importExcelInput.addEventListener("click", () => pauseAutomaticCloudSync(120000));
 importExcelInput.addEventListener("change", async () => {
   const file = importExcelInput.files[0];
   if (!file) return;
-  localImportBusy = true;
-  pauseAutomaticCloudSync(300000);
-  setSyncStatus("", "Wczytywanie importu…");
   try {
     await importProductsFromExcel(file);
   } catch (error) {
     showToast(error.message);
   } finally {
-    localImportBusy = false;
-    pauseAutomaticCloudSync(300000);
     importExcelInput.value = "";
   }
 });
-restoreBackupInput.addEventListener("click", () => pauseAutomaticCloudSync(120000));
 restoreBackupInput.addEventListener("change", async () => {
   const file = restoreBackupInput.files[0];
   if (!file) return;
-  localImportBusy = true;
-  pauseAutomaticCloudSync(300000);
-  setSyncStatus("", "Wczytywanie kopii…");
   try {
     await restoreBackup(file);
   } catch (error) {
     showToast(error.message);
   } finally {
-    localImportBusy = false;
-    pauseAutomaticCloudSync(300000);
     restoreBackupInput.value = "";
   }
 });
@@ -2722,11 +2609,7 @@ locationSuggestion.addEventListener("click", () => {
 loginButton.addEventListener("click", async () => {
   if (currentUser) {
     await supabaseClient.auth.signOut();
-    showToast("Wylogowano. Zaloguj ponownie, żeby zapisywać w chmurze.");
-    return;
-  }
-  if (!supabaseClient) {
-    showToast("Nie załadowano połączenia Supabase. Odśwież stronę albo sprawdź plik vendor/supabase.min.js na GitHub.");
+    showToast("Wylogowano. Aplikacja działa teraz lokalnie.");
     return;
   }
   authModal.hidden = false;
@@ -2767,10 +2650,6 @@ orderRecipientForm.addEventListener("submit", (event) => {
 
 authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!supabaseClient) {
-    showToast("Brak połączenia Supabase. Odśwież stronę i sprawdź, czy wgrano folder vendor.");
-    return;
-  }
   const email = authForm.elements.email.value.trim();
   const password = authForm.elements.password.value;
   const button = authForm.querySelector("button[type='submit']");
@@ -3057,7 +2936,7 @@ registerServiceWorker();
 hydrateImagesFromLocalDatabase();
 initializeSupabase();
 setInterval(() => {
-  if (currentUser && document.visibilityState === "visible" && canRunAutomaticCloudSync()) {
+  if (currentUser && document.visibilityState === "visible") {
     loadCloudProducts({ quiet: true });
   }
 }, 10000);
