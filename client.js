@@ -50,14 +50,6 @@ function numberFromClientInput(value) {
   return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
 }
 
-function formatClientPrice(value) {
-  return new Intl.NumberFormat("pl-PL", {
-    style: "currency",
-    currency: "PLN",
-    minimumFractionDigits: 2,
-  }).format(Number(value) || 0);
-}
-
 function safeClientFileName(value) {
   return String(value || "zamowienie-klienta")
     .replace(/[\\/:*?"<>|]/g, "-")
@@ -105,13 +97,6 @@ function getClientProductById(productId) {
   return clientProducts.find((product) => String(product.id) === String(productId));
 }
 
-function getClientOrderTotal() {
-  return clientOrderItems.reduce(
-    (sum, item) => sum + ((Number(item.quantity) || 0) * (Number(item.price) || 0)),
-    0,
-  );
-}
-
 function getClientStock(product) {
   return Math.max(0, Math.floor(Number(product?.stock) || 0));
 }
@@ -123,26 +108,20 @@ function hasClientStockLimit(product) {
 function renderClientOrder() {
   clientOrderCard.hidden = !clientAccessCode;
   const totalQuantity = clientOrderItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
-  const totalValue = getClientOrderTotal();
   clientOrderSummary.textContent = clientOrderItems.length
-    ? `${clientOrderItems.length} pozycji · ${totalQuantity} szt. · ${formatClientPrice(totalValue)}`
+    ? `${clientOrderItems.length} pozycji · ${totalQuantity} szt.`
     : "Brak produktów w zamówieniu.";
   clientExportOrderButton.disabled = !clientOrderItems.length;
   clientClearOrderButton.disabled = !clientOrderItems.length;
 
   clientOrderList.innerHTML = clientOrderItems.length
-    ? clientOrderItems.map((item) => {
-      const value = (Number(item.quantity) || 0) * (Number(item.price) || 0);
-      return `
+    ? clientOrderItems.map((item) => `
         <div class="client-order-row">
           <span>${escapeHtml(item.name)}</span>
           <strong>${Number(item.quantity)} szt.</strong>
-          <span>${formatClientPrice(item.price)}</span>
-          <b>${formatClientPrice(value)}</b>
           <button type="button" data-client-remove-order="${escapeHtml(item.id)}" aria-label="Usuń z zamówienia">Usuń</button>
         </div>
-      `;
-    }).join("")
+      `).join("")
     : '<div class="client-empty">Kliknij „Dodaj do zamówienia” przy produkcie.</div>';
 }
 
@@ -150,10 +129,8 @@ function addProductToClientOrder(productId) {
   const product = getClientProductById(productId);
   if (!product) return;
   const quantityInput = document.querySelector(`[data-client-quantity="${CSS.escape(String(productId))}"]`);
-  const priceInput = document.querySelector(`[data-client-price="${CSS.escape(String(productId))}"]`);
   const quantity = Math.floor(numberFromClientInput(quantityInput?.value));
   const maxQuantity = getClientStock(product);
-  const price = numberFromClientInput(priceInput?.value);
 
   if (quantity <= 0) {
     showClientToast("Wpisz ilość większą od zera.");
@@ -170,7 +147,6 @@ function addProductToClientOrder(productId) {
   const existing = clientOrderItems.find((item) => item.id === product.id);
   if (existing) {
     existing.quantity = quantity;
-    existing.price = price;
   } else {
     clientOrderItems.push({
       id: product.id,
@@ -179,7 +155,6 @@ function addProductToClientOrder(productId) {
       machineType: product.machine_type || "",
       manufacturer: product.manufacturer || "",
       quantity,
-      price,
     });
   }
   renderClientOrder();
@@ -207,15 +182,12 @@ function exportClientOrderToExcel() {
   const phoneNumber = clientPhoneNumber.value.trim() || "Nie podano";
   const rows = clientOrderItems.map((item, index) => {
     const quantity = Number(item.quantity) || 0;
-    const price = Number(item.price) || 0;
     return [
       index + 1,
       item.name,
       item.machineType,
       item.manufacturer,
       quantity,
-      price,
-      Number((quantity * price).toFixed(2)),
     ];
   });
 
@@ -226,22 +198,18 @@ function exportClientOrderToExcel() {
     ["Osoba kontaktowa", contactPerson],
     ["Telefon", phoneNumber],
     [],
-    ["Lp.", "Nazwa produktu", "Rodzaj maszyny", "Producent części", "Ilość", "Cena jednostkowa (PLN)", "Wartość (PLN)"],
+    ["Lp.", "Nazwa produktu", "Rodzaj maszyny", "Producent części", "Ilość"],
     ...rows,
-    [],
-    ["", "", "", "Razem", "", "", Number(getClientOrderTotal().toFixed(2))],
   ]);
-  worksheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }];
+  worksheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
   worksheet["!cols"] = [
     { wch: 6 },
     { wch: 34 },
     { wch: 24 },
     { wch: 24 },
     { wch: 12 },
-    { wch: 22 },
-    { wch: 18 },
   ];
-  worksheet["!autofilter"] = { ref: `A7:G${rows.length + 7}` };
+  worksheet["!autofilter"] = { ref: `A7:E${rows.length + 7}` };
   if (worksheet.A1) {
     worksheet.A1.s = {
       font: { bold: true, sz: 16, color: { rgb: "FFFFFF" } },
@@ -249,21 +217,13 @@ function exportClientOrderToExcel() {
       alignment: { horizontal: "center", vertical: "center" },
     };
   }
-  ["A7", "B7", "C7", "D7", "E7", "F7", "G7"].forEach((address) => {
+  ["A7", "B7", "C7", "D7", "E7"].forEach((address) => {
     if (!worksheet[address]) return;
     worksheet[address].s = {
       font: { bold: true, color: { rgb: "FFFFFF" } },
       fill: { patternType: "solid", fgColor: { rgb: "1F8E5F" } },
     };
   });
-  rows.forEach((_row, index) => {
-    const excelRow = index + 8;
-    if (worksheet[`F${excelRow}`]) worksheet[`F${excelRow}`].z = '#,##0.00 "zł"';
-    if (worksheet[`G${excelRow}`]) worksheet[`G${excelRow}`].z = '#,##0.00 "zł"';
-  });
-  const totalRow = rows.length + 9;
-  if (worksheet[`G${totalRow}`]) worksheet[`G${totalRow}`].z = '#,##0.00 "zł"';
-
   try {
     const workbook = window.XLSX.utils.book_new();
     window.XLSX.utils.book_append_sheet(workbook, worksheet, "Zamówienie klienta");
@@ -327,9 +287,6 @@ function renderClientProducts() {
           </div>
           <label>Ilość
             <input data-client-quantity="${escapeHtml(product.id)}" type="number" min="1" ${hasClientStockLimit(product) ? `max="${maxQuantity}"` : ""} step="1" value="1" inputmode="numeric" />
-          </label>
-          <label>Cena
-            <input data-client-price="${escapeHtml(product.id)}" type="number" min="0" step="0.01" placeholder="0,00" inputmode="decimal" />
           </label>
           <button type="button" class="primary-button" data-client-add-order="${escapeHtml(product.id)}">Dodaj do zamówienia</button>
         </div>

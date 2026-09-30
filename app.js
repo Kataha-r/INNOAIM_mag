@@ -81,6 +81,7 @@ const clearFiltersButton = document.querySelector("#clearFiltersButton");
 const exportExcelButton = document.querySelector("#exportExcelButton");
 const locationShelf = document.querySelector("#locationShelf");
 const importExcelInput = document.querySelector("#importExcelInput");
+const clientOrderImportInput = document.querySelector("#clientOrderImportInput");
 const backupButton = document.querySelector("#backupButton");
 const restoreBackupInput = document.querySelector("#restoreBackupInput");
 const undoDeleteButton = document.querySelector("#undoDeleteButton");
@@ -2170,6 +2171,153 @@ function numberFromExcel(value) {
   return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
 }
 
+function normalizeImportText(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("pl");
+}
+
+function findHeaderIndex(headers, possibleNames) {
+  const normalized = headers.map(normalizeImportText);
+  return possibleNames
+    .map(normalizeImportText)
+    .map((name) => normalized.findIndex((header) => header === name))
+    .find((index) => index >= 0) ?? -1;
+}
+
+function getSheetMetaValue(rows, labels) {
+  const normalizedLabels = labels.map(normalizeImportText);
+  for (const row of rows.slice(0, 8)) {
+    const label = normalizeImportText(row[0]);
+    if (normalizedLabels.includes(label)) return String(row[1] || "").trim();
+  }
+  return "";
+}
+
+function findProductForClientOrderItem(name, machineType, manufacturer) {
+  const normalizedName = normalizeImportText(name);
+  const normalizedMachine = normalizeImportText(machineType);
+  const normalizedManufacturer = normalizeImportText(manufacturer);
+  const sameName = products.filter((product) => normalizeImportText(product.name) === normalizedName);
+  if (!sameName.length) return null;
+  if (sameName.length === 1) return sameName[0];
+  return sameName.find((product) =>
+    (!normalizedMachine || normalizeImportText(product.machineType) === normalizedMachine)
+    && (!normalizedManufacturer || normalizeImportText(product.manufacturer) === normalizedManufacturer)
+  ) || sameName[0];
+}
+
+async function importClientOrderFromExcel(file) {
+  if (!window.XLSX) throw new Error("Biblioteka Excel nie została załadowana.");
+  const buffer = await file.arrayBuffer();
+  const workbook = window.XLSX.read(buffer, { type: "array" });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = window.XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+  const headerRowIndex = rows.findIndex((row) => {
+    const normalized = row.map(normalizeImportText);
+    return normalized.includes("nazwa produktu") && normalized.includes("ilość");
+  });
+  if (headerRowIndex < 0) {
+    throw new Error("Nie znaleziono tabeli zamówienia. Użyj Excela wyeksportowanego z panelu klienta.");
+  }
+
+  const headers = rows[headerRowIndex];
+  const nameIndex = findHeaderIndex(headers, ["Nazwa produktu", "Rodzaj produktu wysłanego"]);
+  const machineIndex = findHeaderIndex(headers, ["Rodzaj maszyny"]);
+  const manufacturerIndex = findHeaderIndex(headers, ["Producent części"]);
+  const quantityIndex = findHeaderIndex(headers, ["Ilość", "Ilość sztuk", "Ilość do zamówienia"]);
+  if (nameIndex < 0 || quantityIndex < 0) {
+    throw new Error("W zamówieniu brakuje kolumny „Nazwa produktu” albo „Ilość”.");
+  }
+
+  const orderTitle = String(rows[0]?.[0] || "Zamówienie klienta").trim();
+  const recipientName = getSheetMetaValue(rows, ["Firma / odbiorca", "Nazwa odbiorcy", "Firma"]) || "Klient";
+  const importedItems = rows.slice(headerRowIndex + 1)
+    .map((row) => ({
+      name: String(row[nameIndex] || "").trim(),
+      machineType: machineIndex >= 0 ? String(row[machineIndex] || "").trim() : "",
+      manufacturer: manufacturerIndex >= 0 ? String(row[manufacturerIndex] || "").trim() : "",
+      quantity: Math.floor(numberFromExcel(row[quantityIndex])),
+    }))
+    .filter((item) => item.name && item.quantity > 0);
+
+  if (!importedItems.length) throw new Error("Zamówienie nie zawiera produktów z ilością większą od zera.");
+  if (!window.confirm(`Wgrać zamówienie klienta i odjąć ${importedItems.reduce((sum, item) => sum + item.quantity, 0)} szt. ze stanu magazynowego?`)) return;
+
+  const previousProducts = products.map((product) => ({
+    ...product,
+    shipments: Array.isArray(product.shipments) ? [...product.shipments] : [],
+  }));
+  const now = new Date().toISOString();
+  const changedProducts = [];
+  const missingItems = [];
+  const insufficientItems = [];
+
+  importedItems.forEach((item) => {
+    const product = findProductForClientOrderItem(item.name, item.machineType, item.manufacturer);
+    if (!product) {
+      missingItems.push(`${item.name} — ${item.quantity} szt.`);
+      return;
+    }
+    const stockBefore = Number(product.stock) || 0;
+    if (item.quantity > stockBefore) {
+      insufficientItems.push(`${product.name}: zamówiono ${item.quantity} szt., na stanie było ${stockBefore} szt.`);
+    }
+    product.stock = Math.max(0, stockBefore - item.quantity);
+    product.sent = Number(product.sent || 0) + item.quantity;
+    product.shipments = [
+      ...(Array.isArray(product.shipments) ? product.shipments : []),
+      {
+        quantity: item.quantity,
+        date: now,
+        recipientName,
+        orderTitle,
+        unitPrice: Number(product.purchasePrice) || 0,
+        value: Number((item.quantity * (Number(product.purchasePrice) || 0)).toFixed(2)),
+        source: "client_order_import",
+      },
+    ];
+    if (!changedProducts.some((changed) => changed.id === product.id)) changedProducts.push(product);
+  });
+
+  if (!changedProducts.length) {
+    products = previousProducts;
+    throw new Error("Nie dopasowano żadnego produktu z zamówienia do magazynu.");
+  }
+
+  try {
+    if (currentUser) {
+      setSyncStatus("", "Zapisywanie zamówienia klienta…");
+      await Promise.all(changedProducts.map((product) => saveProductToCloud(product, false)));
+      setSyncStatus("online", "Zsynchronizowano");
+    }
+    saveProducts();
+    renderProduct();
+    renderProductsList();
+    renderStatistics();
+    renderOrderSummary();
+    let message = `Wgrano zamówienie klienta: odjęto ${changedProducts.length} pozycji ze stanu.`;
+    if (!currentUser) message += " Zapisano lokalnie — zaloguj się, żeby zapisać w chmurze.";
+    showToast(message);
+    if (missingItems.length || insufficientItems.length) {
+      window.alert([
+        "Zamówienie wgrane, ale sprawdź uwagi:",
+        missingItems.length ? `\nNie znaleziono produktów:\n- ${missingItems.join("\n- ")}` : "",
+        insufficientItems.length ? `\nZa mały stan magazynowy:\n- ${insufficientItems.join("\n- ")}` : "",
+      ].filter(Boolean).join("\n"));
+    }
+  } catch (error) {
+    products = previousProducts;
+    saveProducts();
+    renderProduct();
+    renderProductsList();
+    setSyncStatus("error", "Błąd zapisu");
+    const reason = getErrorMessage(error);
+    throw new Error(`Nie udało się zapisać zamówienia klienta.${reason ? ` Powód: ${reason}` : ""}`);
+  }
+}
+
 function productFromExcelRow(row, existingProduct) {
   const location = normalizeLocation(row["Lokalizacja"] || existingProduct?.location || "A/1/1");
   const importedCategory = String(row["Kategoria"] || existingProduct?.category || "Inne").trim();
@@ -2778,6 +2926,20 @@ importExcelInput.addEventListener("change", async () => {
     localImportBusy = false;
     pauseAutomaticCloudSync(300000);
     importExcelInput.value = "";
+  }
+});
+clientOrderImportInput.addEventListener("click", () => pauseAutomaticCloudSync(120000));
+clientOrderImportInput.addEventListener("change", async () => {
+  const file = clientOrderImportInput.files[0];
+  if (!file) return;
+  pauseAutomaticCloudSync(300000);
+  try {
+    await importClientOrderFromExcel(file);
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    pauseAutomaticCloudSync(300000);
+    clientOrderImportInput.value = "";
   }
 });
 restoreBackupInput.addEventListener("click", () => pauseAutomaticCloudSync(120000));

@@ -3188,10 +3188,10 @@ form select:focus {
 
 .client-product-card {
   display: grid;
-  grid-template-columns: 92px minmax(0, 1fr) auto minmax(250px, .65fr);
+  grid-template-columns: 66px minmax(0, 1fr) auto minmax(190px, .55fr);
   align-items: center;
-  gap: 18px;
-  padding: 18px 28px;
+  gap: 10px;
+  padding: 10px 18px;
   border-bottom: 1px solid #edf0f5;
 }
 
@@ -3200,20 +3200,20 @@ form select:focus {
 }
 
 .client-product-image {
-  width: 78px;
-  height: 78px;
+  width: 56px;
+  height: 56px;
   display: grid;
   place-items: center;
   overflow: hidden;
   border: 1px solid #e6eaf1;
-  border-radius: 16px;
+  border-radius: 12px;
   background: #f4f7f8;
 }
 
 .client-product-image img {
   width: 100%;
   height: 100%;
-  padding: 6px;
+  padding: 4px;
   object-fit: contain;
 }
 
@@ -3226,46 +3226,51 @@ form select:focus {
 }
 
 .client-product-info h3 {
-  margin: 5px 0 6px;
-  font-size: 17px;
+  margin: 3px 0 3px;
+  font-size: 14px;
 }
 
 .client-product-info p {
-  margin: 0 0 10px;
+  display: -webkit-box;
+  max-width: 620px;
+  margin: 0 0 5px;
+  overflow: hidden;
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.55;
+  font-size: 10px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
 }
 
 .client-product-info dl {
   display: flex;
-  gap: 14px;
+  gap: 10px;
   flex-wrap: wrap;
   margin: 0;
 }
 
 .client-product-info dt {
   color: #98a2b4;
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 800;
   text-transform: uppercase;
 }
 
 .client-product-info dd {
-  margin: 3px 0 0;
+  margin: 1px 0 0;
   color: #3f4d65;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
 }
 
 .client-availability {
-  min-width: 104px;
-  padding: 9px 12px;
+  min-width: 88px;
+  padding: 6px 9px;
   border-radius: 999px;
   background: #fff0ed;
   color: #c83f36;
   text-align: center;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 900;
 }
 
@@ -3276,26 +3281,26 @@ form select:focus {
 
 .client-order-controls {
   display: grid;
-  grid-template-columns: 72px 92px minmax(120px, 1fr);
+  grid-template-columns: 64px minmax(105px, 1fr);
   align-items: end;
-  gap: 8px;
+  gap: 6px;
 }
 
 .client-order-limits {
   grid-column: 1 / -1;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 8px;
+  gap: 4px;
 }
 
 .client-order-limits span {
   display: block;
-  padding: 8px 10px;
+  padding: 5px 8px;
   border: 1px solid rgba(30, 47, 42, 0.1);
-  border-radius: 12px;
+  border-radius: 9px;
   background: #f7fbf2;
   color: #536176;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 800;
 }
 
@@ -3312,16 +3317,16 @@ form select:focus {
 }
 
 .client-order-controls input {
-  height: 36px;
-  margin-top: 5px;
+  height: 30px;
+  margin-top: 3px;
   text-align: center;
   font-weight: 800;
 }
 
 .client-order-controls .primary-button {
-  min-height: 36px;
-  padding: 0 12px;
-  font-size: 10px;
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 9px;
   white-space: nowrap;
 }
 
@@ -3384,14 +3389,14 @@ form select:focus {
 
 .client-order-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 90px 120px 130px 80px;
+  grid-template-columns: minmax(220px, 1fr) 90px 80px;
   align-items: center;
   gap: 14px;
-  min-height: 54px;
-  padding: 0 28px;
+  min-height: 42px;
+  padding: 0 18px;
   border-bottom: 1px solid #edf0f5;
   color: #53617a;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .client-order-row:last-child {
@@ -3456,7 +3461,7 @@ form select:focus {
   }
 
   .client-product-card {
-    grid-template-columns: 72px minmax(0, 1fr);
+    grid-template-columns: 56px minmax(0, 1fr);
   }
 
   .client-availability {
@@ -3466,7 +3471,7 @@ form select:focus {
 
   .client-order-controls {
     grid-column: 1 / -1;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 76px 1fr;
   }
 
   .client-order-recipient {
