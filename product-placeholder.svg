@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 250">
+  <rect width="320" height="250" rx="24" fill="#eef2f7"/>
+  <g transform="translate(105 62)" fill="none" stroke="#9aa8bb" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m55 4 50 28-50 28L5 32 55 4Z"/>
+    <path d="m5 51 50 28 50-28"/>
+    <path d="m5 72 50 28 50-28"/>
+  </g>
+  <text x="160" y="194" text-anchor="middle" fill="#7b899f" font-family="Arial, sans-serif" font-size="16" font-weight="700">BRAK ZDJĘCIA</text>
+</svg>
