@@ -461,8 +461,13 @@
                 <span class="section-label">Wysyłki</span>
                 <h3>Kiedy i ile wysłano</h3>
               </div>
-              <span class="statistics-note">Historia jest zapisywana od tej wersji aplikacji.</span>
+              <div class="statistics-export-controls">
+                <label>Od dnia<input id="shipmentExportDateFrom" type="date" /></label>
+                <label>Do dnia<input id="shipmentExportDateTo" type="date" /></label>
+                <button type="button" class="export-button" id="exportShipmentsButton">Eksportuj wysyłki</button>
+              </div>
             </div>
+            <p class="statistics-note">Historia jest zapisywana od tej wersji aplikacji. Eksport obejmuje wysyłki z wybranego zakresu dat.</p>
             <div class="statistics-table-header">
               <span>Data i godzina</span>
               <span>Produkt</span>
@@ -492,6 +497,7 @@
                 <div class="client-settings-actions">
                   <button type="button" class="primary-button" id="saveGlobalClientCodesButton">Zapisz kody dla wszystkich produktów</button>
                   <button type="button" class="data-button" id="clearGlobalClientCodesButton">Wyczyść dostęp</button>
+                  <button type="button" class="data-button" id="downloadClientCodesSqlButton">Pobierz SQL naprawy kodów</button>
                 </div>
                 <div class="client-code-replace">
                   <label>Stary kod<input id="replaceClientCodeFrom" type="text" placeholder="np. STARY2026" /></label>
@@ -513,6 +519,10 @@
                   </label>
                 </div>
                 <p id="clientPreviewSummary">Brak wybranego klienta.</p>
+                <div class="client-cloud-check">
+                  <button type="button" class="data-button" id="checkClientCodeCloudButton">Sprawdź kod w chmurze</button>
+                  <span id="clientCloudCheckResult">Nie sprawdzono jeszcze chmury.</span>
+                </div>
               </article>
             </div>
 
@@ -604,9 +614,10 @@
           <button class="close-button" id="closeAuthModal" aria-label="Zamknij">×</button>
         </div>
         <form id="authForm">
-          <p class="auth-description">Wyślemy bezpieczny link. Otwórz go na telefonie i komputerze, używając tego samego adresu e-mail.</p>
+          <p class="auth-description">Wpisz e-mail i hasło z Supabase. Jeśli zostawisz hasło puste, aplikacja spróbuje wysłać link do logowania na e-mail.</p>
           <label>Adres e-mail<input name="email" type="email" placeholder="twoj@email.pl" required /></label>
-          <button type="submit" class="primary-button auth-submit">Wyślij link do logowania</button>
+          <label>Hasło Supabase<input name="password" type="password" placeholder="Opcjonalnie: hasło admina" autocomplete="current-password" /></label>
+          <button type="submit" class="primary-button auth-submit">Zaloguj / wyślij link</button>
         </form>
       </div>
     </div>

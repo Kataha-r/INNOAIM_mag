@@ -322,6 +322,14 @@ async function initializeClientApp() {
   localStorage.removeItem("innoaim-client-access-code");
 }
 
+function registerClientServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  if (!location.protocol.startsWith("http")) return;
+  navigator.serviceWorker.register("./service-worker.js").catch(() => {
+    // Panel klienta działa też bez trybu offline.
+  });
+}
+
 clientLoginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const accessCode = clientLoginForm.elements.accessCode.value.trim();
@@ -383,3 +391,4 @@ clientClearOrderButton.addEventListener("click", () => {
 });
 
 initializeClientApp();
+registerClientServiceWorker();

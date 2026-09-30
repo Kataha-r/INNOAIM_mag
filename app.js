@@ -98,10 +98,13 @@ const ordersCreateShortageOrderButton = document.querySelector("#ordersCreateSho
 const globalClientCodesInput = document.querySelector("#globalClientCodesInput");
 const saveGlobalClientCodesButton = document.querySelector("#saveGlobalClientCodesButton");
 const clearGlobalClientCodesButton = document.querySelector("#clearGlobalClientCodesButton");
+const downloadClientCodesSqlButton = document.querySelector("#downloadClientCodesSqlButton");
 const clientPreviewCodeSelect = document.querySelector("#clientPreviewCodeSelect");
 const replaceClientCodeFrom = document.querySelector("#replaceClientCodeFrom");
 const replaceClientCodeTo = document.querySelector("#replaceClientCodeTo");
 const replaceClientCodeButton = document.querySelector("#replaceClientCodeButton");
+const checkClientCodeCloudButton = document.querySelector("#checkClientCodeCloudButton");
+const clientCloudCheckResult = document.querySelector("#clientCloudCheckResult");
 const clientPreviewProductsList = document.querySelector("#clientPreviewProductsList");
 const clientPreviewSummary = document.querySelector("#clientPreviewSummary");
 const statisticsRangeOne = document.querySelector("#statisticsRangeOne");
@@ -118,6 +121,9 @@ const topProductsCount = document.querySelector("#topProductsCount");
 const topRecipientsList = document.querySelector("#topRecipientsList");
 const statisticsList = document.querySelector("#statisticsList");
 const statisticsSearch = document.querySelector("#statisticsSearch");
+const shipmentExportDateFrom = document.querySelector("#shipmentExportDateFrom");
+const shipmentExportDateTo = document.querySelector("#shipmentExportDateTo");
+const exportShipmentsButton = document.querySelector("#exportShipmentsButton");
 const clearAllSentButton = document.querySelector("#clearAllSentButton");
 const clearStatisticsButton = document.querySelector("#clearStatisticsButton");
 const shortageFilterButton = document.querySelector("#shortageFilterButton");
@@ -781,7 +787,131 @@ function shipmentValue(product, shipment) {
   return Number(shipment.value) || ((Number(shipment.quantity) || 0) * (Number(shipment.unitPrice ?? product.purchasePrice) || 0));
 }
 
+function parseDateInputStart(value) {
+  if (!value) return null;
+  const date = new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDateInputLocal(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseDateInputEnd(value) {
+  if (!value) return null;
+  const date = new Date(`${value}T23:59:59.999`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function getOrderNumberFromTitle(orderTitle) {
+  const title = String(orderTitle || "").trim();
+  const match = title.match(/\bnr\s+([0-9A-Za-z_-]+)/i);
+  if (match?.[1]) return match[1].trim();
+  return title;
+}
+
+function exportShipmentsToExcel() {
+  if (!window.XLSX) {
+    showToast("Nie udało się załadować modułu eksportu Excel.");
+    return;
+  }
+  const dateFromValue = shipmentExportDateFrom.value;
+  const dateToValue = shipmentExportDateTo.value;
+  const dateFrom = parseDateInputStart(dateFromValue);
+  const dateTo = parseDateInputEnd(dateToValue);
+  if (!dateFrom || !dateTo) {
+    showToast("Wybierz datę od i datę do eksportu wysyłek.");
+    return;
+  }
+  if (dateFrom > dateTo) {
+    showToast("Data od nie może być późniejsza niż data do.");
+    return;
+  }
+
+  const shipments = getShipmentHistory()
+    .filter((shipment) => {
+      const date = new Date(shipment.date);
+      return !Number.isNaN(date.getTime()) && date >= dateFrom && date <= dateTo;
+    })
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  if (!shipments.length) {
+    showToast("Brak wysyłek w wybranym okresie.");
+    return;
+  }
+
+  const rows = shipments.map((shipment, index) => [
+    index + 1,
+    getOrderNumberFromTitle(shipment.orderTitle),
+    new Date(shipment.date),
+    shipment.recipientName || "Nie podano",
+    shipment.productName,
+    Number(shipment.quantity) || 0,
+  ]);
+  const title = `Raport wysyłek od ${dateFromValue} do ${dateToValue}`;
+  const worksheet = window.XLSX.utils.aoa_to_sheet([
+    [title],
+    ["Lp.", "Nr zamówienia", "Data wygenerowania zamówienia", "Firma", "Rodzaj produktu wysłanego", "Ilość sztuk"],
+    ...rows,
+  ]);
+  worksheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } }];
+  worksheet["!cols"] = [
+    { wch: 8 },
+    { wch: 18 },
+    { wch: 28 },
+    { wch: 30 },
+    { wch: 52 },
+    { wch: 14 },
+  ];
+  worksheet["!rows"] = [{ hpt: 26 }, { hpt: 24 }];
+  worksheet["!autofilter"] = { ref: `A2:F${rows.length + 2}` };
+  if (worksheet.A1) {
+    worksheet.A1.s = {
+      font: { bold: true, sz: 16, color: { rgb: "FFFFFF" } },
+      fill: { patternType: "solid", fgColor: { rgb: "17243F" } },
+      alignment: { horizontal: "center", vertical: "center" },
+    };
+  }
+  ["A2", "B2", "C2", "D2", "E2", "F2"].forEach((address) => {
+    if (!worksheet[address]) return;
+    worksheet[address].s = {
+      font: { bold: true, color: { rgb: "FFFFFF" } },
+      fill: { patternType: "solid", fgColor: { rgb: "1F8E5F" } },
+      alignment: { vertical: "center", wrapText: true },
+      border: {
+        top: { style: "thin", color: { rgb: "C8D7CD" } },
+        bottom: { style: "thin", color: { rgb: "C8D7CD" } },
+        left: { style: "thin", color: { rgb: "C8D7CD" } },
+        right: { style: "thin", color: { rgb: "C8D7CD" } },
+      },
+    };
+  });
+  rows.forEach((_row, index) => {
+    const excelRow = index + 3;
+    if (worksheet[`A${excelRow}`]) worksheet[`A${excelRow}`].t = "n";
+    if (worksheet[`C${excelRow}`]) worksheet[`C${excelRow}`].z = "dd.mm.yyyy hh:mm";
+    if (worksheet[`F${excelRow}`]) {
+      worksheet[`F${excelRow}`].t = "n";
+      worksheet[`F${excelRow}`].z = '#,##0 "szt."';
+    }
+  });
+
+  const workbook = window.XLSX.utils.book_new();
+  window.XLSX.utils.book_append_sheet(workbook, worksheet, "Wysyłki");
+  window.XLSX.writeFile(workbook, `wysylki-${dateFromValue}-do-${dateToValue}.xlsx`);
+  showToast(`Wyeksportowano ${shipments.length} wierszy wysyłek.`);
+}
+
 function renderStatistics() {
+  if (!shipmentExportDateFrom.value || !shipmentExportDateTo.value) {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    shipmentExportDateFrom.value ||= formatDateInputLocal(startOfMonth);
+    shipmentExportDateTo.value ||= formatDateInputLocal(now);
+  }
   const searchQuery = statisticsSearch.value.trim().toLocaleLowerCase("pl");
   const statisticsProducts = products.filter((product) =>
     !searchQuery || [getWarehouseNumber(product), product.name, product.machineType, product.location, product.manufacturer]
@@ -1216,6 +1346,20 @@ function saveClientCodeCatalog(codes) {
   localStorage.setItem(CLIENT_CODES_KEY, JSON.stringify(parseClientCodes(codes.join(","))));
 }
 
+function sqlString(value) {
+  return `'${String(value || "").replaceAll("'", "''")}'`;
+}
+
+function downloadTextFile(filename, content, type = "text/plain") {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function getAllClientCodes() {
   const productCodes = products.flatMap((product) =>
     Array.isArray(product.visibleToCodes) ? product.visibleToCodes : []
@@ -1261,6 +1405,55 @@ function canSaveClientCodesToCloud() {
   showToast("Kod klienta musi być zapisany w chmurze. Kliknij „Zaloguj” w prawym górnym rogu, zaloguj admina i zapisz kod ponownie.");
   setSyncStatus("error", "Klienci: wymaga chmury");
   return false;
+}
+
+async function checkSelectedClientCodeInCloud() {
+  const selectedCode = clientPreviewCodeSelect.value || parseClientCodes(globalClientCodesInput.value)[0] || "";
+  if (!selectedCode) {
+    clientCloudCheckResult.textContent = "Najpierw wpisz albo wybierz kod klienta.";
+    showToast("Najpierw wpisz albo wybierz kod klienta.");
+    return;
+  }
+  if (!supabaseClient && window.supabase?.createClient) {
+    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  }
+  if (!supabaseClient) {
+    clientCloudCheckResult.textContent = "Nie udało się połączyć z biblioteką Supabase.";
+    showToast("Nie udało się połączyć z biblioteką Supabase.");
+    return;
+  }
+  clientCloudCheckResult.textContent = `Sprawdzam kod ${selectedCode} w chmurze…`;
+  try {
+    const { data, error } = await supabaseClient.rpc("get_client_products_by_code", {
+      access_code: selectedCode,
+    });
+    if (error) throw error;
+    const count = Array.isArray(data) ? data.length : 0;
+    clientCloudCheckResult.textContent = count
+      ? `Kod ${selectedCode} działa w chmurze: ${count} produktów.`
+      : `Kod ${selectedCode} działa technicznie, ale ma 0 produktów w chmurze.`;
+    showToast(count
+      ? `Kod działa: ${count} produktów w chmurze.`
+      : "Kod ma 0 produktów w chmurze. Trzeba zapisać kody w Supabase."
+    );
+  } catch (error) {
+    const reason = error?.message ? ` Powód: ${error.message}` : "";
+    clientCloudCheckResult.textContent = `Nie udało się sprawdzić chmury.${reason}`;
+    showToast(`Nie udało się sprawdzić chmury.${reason}`);
+  }
+}
+
+function downloadClientCodesRepairSql() {
+  const codes = parseClientCodes(globalClientCodesInput.value);
+  if (!codes.length) {
+    showToast("Wpisz przynajmniej jeden kod, żeby przygotować SQL naprawy.");
+    return;
+  }
+  saveClientCodeCatalog(codes);
+  const sqlCodes = codes.map(sqlString).join(", ");
+  const sql = `-- Naprawa kodów klienta InnoAim\n-- Supabase -> SQL Editor -> New query -> wklej całość -> Run\n-- Ten skrypt ustawia podane kody dla wszystkich produktów w tabeli products.\n\nalter table public.products\nadd column if not exists visible_to_codes text[] not null default '{}'::text[];\n\nupdate public.products\nset visible_to_codes = array[${sqlCodes}]::text[];\n\n-- Kontrola po uruchomieniu. Powinno pokazać liczbę produktów dla każdego kodu.\nselect\n  code,\n  count(*) as liczba_produktow\nfrom public.products p\ncross join unnest(array[${sqlCodes}]::text[]) as code\nwhere exists (\n  select 1\n  from unnest(p.visible_to_codes) as saved_code\n  where lower(trim(saved_code)) = lower(trim(code))\n)\ngroup by code\norder by code;\n`;
+  downloadTextFile("naprawa-kodow-klienta.sql", sql, "text/sql");
+  showToast("Pobrano plik SQL naprawy kodów. Wklej go w Supabase SQL Editor.");
 }
 
 function renderClientsView() {
@@ -2282,8 +2475,11 @@ statisticsRangeOne.addEventListener("change", renderStatistics);
 statisticsRangeTwo.addEventListener("change", renderStatistics);
 statisticsSearch.addEventListener("input", renderStatistics);
 topProductsCount.addEventListener("change", renderStatistics);
+exportShipmentsButton.addEventListener("click", exportShipmentsToExcel);
 clientPreviewCodeSelect.addEventListener("change", renderClientsView);
 saveGlobalClientCodesButton.addEventListener("click", saveGlobalClientCodesForAllProducts);
+downloadClientCodesSqlButton.addEventListener("click", downloadClientCodesRepairSql);
+checkClientCodeCloudButton.addEventListener("click", checkSelectedClientCodeInCloud);
 clearGlobalClientCodesButton.addEventListener("click", () => {
   globalClientCodesInput.value = "";
   saveGlobalClientCodesForAllProducts();
@@ -2455,23 +2651,34 @@ orderRecipientForm.addEventListener("submit", (event) => {
 authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const email = authForm.elements.email.value.trim();
+  const password = authForm.elements.password.value;
   const button = authForm.querySelector("button[type='submit']");
   button.disabled = true;
-  button.textContent = "Wysyłanie…";
-  const redirectTo = `${window.location.origin}${window.location.pathname}`;
-  const { error } = await supabaseClient.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: redirectTo },
-  });
+  button.textContent = password ? "Logowanie…" : "Wysyłanie…";
+  let error = null;
+  if (password) {
+    const result = await supabaseClient.auth.signInWithPassword({ email, password });
+    error = result.error;
+  } else {
+    const redirectTo = `${window.location.origin}${window.location.pathname}`;
+    const result = await supabaseClient.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: redirectTo },
+    });
+    error = result.error;
+  }
   button.disabled = false;
-  button.textContent = "Wyślij link do logowania";
+  button.textContent = "Zaloguj / wyślij link";
   if (error) {
-    showToast(`Nie udało się wysłać linku: ${error.message}`);
+    showToast(password
+      ? `Nie udało się zalogować: ${error.message}`
+      : `Nie udało się wysłać linku: ${error.message}`
+    );
     return;
   }
   authModal.hidden = true;
   document.body.style.overflow = "";
-  showToast("Link do logowania został wysłany na e-mail.");
+  showToast(password ? "Zalogowano do chmury." : "Link do logowania został wysłany na e-mail.");
 });
 
 productsList.addEventListener("click", (event) => {
