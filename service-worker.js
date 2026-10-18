@@ -1,4 +1,4 @@
-const CACHE_NAME = "innoaim-magazyn-v33-timeout-batches";
+const CACHE_NAME = "innoaim-magazyn-v34-fixed-numbers";
 const APP_FILES = [
   "./",
   "./index.html",
