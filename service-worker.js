@@ -1,0 +1,68 @@
+const CACHE_NAME = "innoaim-magazyn-v36-backup14-number-repair";
+const APP_FILES = [
+  "./",
+  "./index.html",
+  "./klient.html",
+  "./styles.css",
+  "./app.js",
+  "./client-order-import.js",
+  "./client-order-import.css",
+  "./client.js",
+  "./manifest.webmanifest",
+  "./innoaim-logo.png",
+  "./innoaim-app-icon.svg",
+  "./innoaim-phone-icon.jpg",
+  "./innoaim-phone-icon-square.jpg",
+  "./innoaim-phone-icon-512.jpg",
+  "./product-placeholder.svg",
+  "./vendor/xlsx.bundle.js",
+  "./vendor/supabase.min.js"
+];
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(APP_FILES))
+      .then(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches.keys()
+      .then((names) => Promise.all(
+        names
+          .filter((name) => name !== CACHE_NAME)
+          .map((name) => caches.delete(name))
+      ))
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  const request = event.request;
+  if (request.method !== "GET") return;
+  // Nigdy nie buforuj sesji, API ani nowego panelu klienta.
+  const requestUrl = new URL(request.url);
+  if (requestUrl.origin !== self.location.origin || requestUrl.pathname.includes("/panel-klienta/")) return;
+
+  event.respondWith(
+    caches.match(request).then((cached) => {
+      if (cached) return cached;
+      return fetch(request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          return response;
+        })
+        .catch(() => {
+          if (request.mode === "navigate") {
+            const url = new URL(request.url);
+            if (url.pathname.endsWith("/klient.html")) return caches.match("./klient.html");
+            return caches.match("./index.html");
+          }
+          return undefined;
+        });
+    })
+  );
+});
